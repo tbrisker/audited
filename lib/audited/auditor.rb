@@ -38,10 +38,15 @@ module Audited
         # don't allow multiple calls
         return if included_modules.include?(Audited::Auditor::AuditedInstanceMethods)
 
+        extend Audited::Auditor::AuditedClassMethods
+        include Audited::Auditor::AuditedInstanceMethods
+
         class_attribute :audit_associated_with,   instance_writer: false
         class_attribute :audited_options,       instance_writer: false
 
         self.audited_options = options
+        set_audited_columns
+
         self.audit_associated_with = options[:associated_with]
 
         if options[:comment_required]
@@ -68,10 +73,7 @@ module Audited
 
         attr_accessor :version
 
-        extend Audited::Auditor::AuditedClassMethods
-        include Audited::Auditor::AuditedInstanceMethods
-
-        self.auditing_enabled = true
+        enable_auditing
       end
 
       def has_associated_audits
@@ -129,7 +131,7 @@ module Audited
 
       # List of attributes that are audited.
       def audited_attributes
-        attributes.except(*non_audited_columns.map(&:to_s))
+        attributes.except(*non_audited_columns)
       end
 
       protected
@@ -243,26 +245,18 @@ module Audited
     end # InstanceMethods
 
     module AuditedClassMethods
-      # Returns an array of columns that are audited. See non_audited_columns
+      # Returns an array of columns that are audited.
       def audited_columns
         @audited_columns ||= column_names - non_audited_columns
       end
 
       def non_audited_columns
-        @non_audited_columns ||= begin
-          options = audited_options
-          if options[:only]
-            except = column_names - Array.wrap(options[:only]).flatten.map(&:to_s)
-          else
-            except = default_ignored_attributes + Audited.ignored_attributes
-            except |= Array(options[:except]).collect(&:to_s) if options[:except]
-          end
-          except
-        end
+        @non_audited_columns
       end
 
       def non_audited_columns=(columns)
-        @non_audited_columns = columns
+        @audited_columns = nil # invalidate cached audited_columns
+        @non_audited_columns = columns.map(&:to_s)
       end
 
       # Executes the block with auditing disabled.
@@ -301,6 +295,15 @@ module Audited
 
       def auditing_enabled=(val)
         Audited.store["#{table_name}_auditing_enabled"] = val
+      end
+
+      protected
+      def set_audited_columns
+        if audited_options[:only]
+          self.non_audited_columns = column_names - Array.wrap(audited_options[:only]).map(&:to_s)
+        else
+          self.non_audited_columns = Array.wrap(audited_options[:except]).map(&:to_s) | default_ignored_attributes | Audited.ignored_attributes
+        end
       end
     end
   end
